@@ -10,6 +10,7 @@ struct RestoApp: App {
         if CommandLine.arguments.contains("--self-test") {
             precondition(LocalSession.selfCheck())
             precondition(MemoryReader.selfCheck())
+            precondition(BatteryReader.selfCheck())
             exit(0)
         }
     }
@@ -31,22 +32,26 @@ final class Monitor {
     private(set) var usages: [Agent: UsageSnapshot] = [:]
     private(set) var usageErrors: [Agent: String] = [:]
     private(set) var systemMemory: (used: UInt64, total: UInt64)?
+    private(set) var battery: Battery?
     var pebbleVisible = true
 
     /// Qué filas van en la pebble. Se elige desde el menu bar y sobrevive al reinicio.
     var pebbleAgents: Set<Agent> { didSet { persistPebble() } }
     var pebbleShowsMemory: Bool { didSet { persistPebble() } }
+    var pebbleShowsBattery: Bool { didSet { persistPebble() } }
 
     private var timer: Timer?
     private var lastUsageRefresh = Date.distantPast
     private static let agentsKey = "pebbleAgents"
     private static let memoryKey = "pebbleShowsMemory"
+    private static let batteryKey = "pebbleShowsBattery"
 
     init() {
         let defaults = UserDefaults.standard
         pebbleAgents = (defaults.array(forKey: Self.agentsKey) as? [String])
             .map { Set($0.compactMap(Agent.named)) } ?? [.claude, .codex]
         pebbleShowsMemory = defaults.object(forKey: Self.memoryKey) as? Bool ?? true
+        pebbleShowsBattery = defaults.object(forKey: Self.batteryKey) as? Bool ?? true
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -56,12 +61,15 @@ final class Monitor {
 
     var activeCount: Int { agents.filter(\.hasRecentSession).count }
     /// Nunca menos de una fila: una píldora vacía se ve como un bug.
-    var pebbleRowCount: Int { max(1, pebbleAgents.count + (pebbleShowsMemory ? 1 : 0)) }
+    var pebbleRowCount: Int {
+        max(1, pebbleAgents.count + (pebbleShowsMemory ? 1 : 0) + (pebbleShowsBattery && battery != nil ? 1 : 0))
+    }
     var pebbleOrder: [Agent] { Agent.allCases.filter(pebbleAgents.contains) }
 
     private func persistPebble() {
         UserDefaults.standard.set(pebbleAgents.map(\.command), forKey: Self.agentsKey)
         UserDefaults.standard.set(pebbleShowsMemory, forKey: Self.memoryKey)
+        UserDefaults.standard.set(pebbleShowsBattery, forKey: Self.batteryKey)
         PebbleController.shared.resize(rows: pebbleRowCount)
     }
 
@@ -72,9 +80,12 @@ final class Monitor {
             let memory = MemoryReader.perCommand()
             let scanned = Agent.allCases.map { AgentStatus(agent: $0, memory: memory) }
             let system = MemoryReader.system()
+            let battery = BatteryReader.read()
             await MainActor.run {
                 self?.agents = scanned
                 self?.systemMemory = system
+                if self?.battery == nil && battery != nil { PebbleController.shared.resize(rows: (self?.pebbleRowCount ?? 0) + 1) }
+                self?.battery = battery
             }
         }
         guard force || Date.now.timeIntervalSince(lastUsageRefresh) > 120 else { return }
@@ -156,6 +167,12 @@ private struct WatcherView: View {
                     PebblePin(isOn: $monitor.pebbleShowsMemory, label: "RAM del sistema")
                 }
             }
+            if let battery = monitor.battery {
+                HStack(spacing: 8) {
+                    BatteryLine(battery: battery)
+                    PebblePin(isOn: $monitor.pebbleShowsBattery, label: "Batería")
+                }
+            }
 
             Text("El alfiler elige qué va en la pebble.")
                 .font(.caption2).foregroundStyle(.tertiary)
@@ -224,7 +241,10 @@ private struct PebbleView: View {
             if let memory = monitor.systemMemory, monitor.pebbleShowsMemory {
                 PebbleMemoryLine(used: memory.used, total: memory.total)
             }
-            if monitor.pebbleOrder.isEmpty && !monitor.pebbleShowsMemory {
+            if let battery = monitor.battery, monitor.pebbleShowsBattery {
+                PebbleBatteryLine(battery: battery)
+            }
+            if monitor.pebbleOrder.isEmpty && !monitor.pebbleShowsMemory && !monitor.pebbleShowsBattery {
                 Text("Nada alfilerado").font(.caption2).foregroundStyle(.tertiary)
                     .frame(height: PebbleController.rowHeight)
             }
@@ -389,6 +409,65 @@ private struct AgentRow: View {
     }
 }
 
+/// Los colores de las barras que no son cuota: si todo fuera azul, un 90% de RAM se leería
+/// como "te queda 90%", que es justo lo contrario.
+enum RestoBar {
+    static func memory(_ fraction: Double) -> Color { fraction > 0.85 ? .orange : .purple }
+
+    static func battery(_ battery: Battery) -> Color {
+        if battery.isCharging || battery.isPlugged { return .green }
+        switch battery.percent {
+        case ...10: return .red
+        case ...20: return .orange
+        default: return .green
+        }
+    }
+}
+
+private struct BatteryLine: View {
+    let battery: Battery
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Label("Batería \(battery.percent)% · \(battery.stateText)",
+                      systemImage: battery.isPlugged ? "battery.100.bolt" : "battery.50")
+                Spacer()
+                if let time = battery.timeText { Text(time) }
+            }
+            .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            ProgressView(value: Double(battery.percent), total: 100).tint(RestoBar.battery(battery))
+            if let health = battery.healthText {
+                Text(health).font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+            }
+        }
+    }
+}
+
+private struct PebbleBatteryLine: View {
+    let battery: Battery
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Batería").font(.caption2.weight(.semibold)).frame(width: 52, alignment: .leading)
+            Capsule().fill(.quaternary).frame(width: PebbleController.barWidth, height: 5)
+                .overlay(alignment: .leading) {
+                    Capsule().fill(RestoBar.battery(battery))
+                        .frame(width: PebbleController.barWidth * Double(battery.percent) / 100, height: 5)
+                }
+            Spacer(minLength: 0)
+            HStack(spacing: 2) {
+                if battery.isCharging { Image(systemName: "bolt.fill").font(.system(size: 8)) }
+                Text("\(battery.percent)%").font(.caption2.weight(.medium)).monospacedDigit()
+            }
+            .foregroundStyle(battery.percent <= 20 && !battery.isPlugged
+                             ? AnyShapeStyle(RestoBar.battery(battery)) : AnyShapeStyle(.secondary))
+            .frame(width: 46, alignment: .trailing)
+        }
+        .frame(height: PebbleController.rowHeight)
+    }
+}
+
 private struct SystemMemoryLine: View {
     let used: UInt64
     let total: UInt64
@@ -403,7 +482,7 @@ private struct SystemMemoryLine: View {
                 Text("\(Int((fraction * 100).rounded()))% · \(MemoryReader.text(used)) de \(MemoryReader.text(total))")
             }
             .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-            ProgressView(value: fraction).tint(fraction > 0.85 ? .orange : .accentColor)
+            ProgressView(value: fraction).tint(RestoBar.memory(fraction))
         }
     }
 }
@@ -480,7 +559,7 @@ private struct PebbleMemoryLine: View {
             Text("RAM").font(.caption2.weight(.semibold)).frame(width: 52, alignment: .leading)
             Capsule().fill(.quaternary).frame(width: PebbleController.barWidth, height: 5)
                 .overlay(alignment: .leading) {
-                    Capsule().fill(fraction > 0.85 ? Color.orange : .blue)
+                    Capsule().fill(RestoBar.memory(fraction))
                         .frame(width: PebbleController.barWidth * fraction, height: 5)
                 }
             Spacer(minLength: 0)
