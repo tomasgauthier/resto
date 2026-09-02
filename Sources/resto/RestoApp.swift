@@ -163,12 +163,12 @@ private struct WatcherView: View {
             // El detalle completo vive acá: la pebble sólo muestra lo que quede alfilerado.
             // Sin ScrollView a propósito: dentro de un MenuBarExtra(.window) mide cero y la
             // lista sale en blanco. Son siete filas fijas, caben.
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(withData) { status in row(status) }
             }
             if !withoutData.isEmpty {
                 DisclosureGroup(isExpanded: $showAll) {
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 8) {
                         ForEach(withoutData) { status in row(status) }
                     }
                     .padding(.top, 8)
@@ -324,23 +324,44 @@ private struct AgentRow: View {
     let usage: UsageSnapshot?
     let error: String?
     @Binding var pinned: Bool
+    @State private var expanded = false
+
+    /// Lo único que se ve plegado: el número con el que uno decide si sigue o para.
+    private var headline: Text {
+        if let remaining = usage?.fiveHour.map({ 100 - $0.usedPercent }) {
+            return Text("queda \(remaining)%")
+        }
+        if let bytes = status.residentBytes { return Text(MemoryReader.text(bytes)) }
+        return Text(status.installed ? "Instalado" : "No instalado")
+    }
+
+    private var hasDetail: Bool {
+        usage != nil || status.session != nil || (error != nil && status.installed)
+    }
 
     var body: some View {
+        if hasDetail {
+            DisclosureGroup(isExpanded: $expanded) { detail } label: { header }
+        } else {
+            header
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            Image(systemName: status.agent.symbol)
+                .foregroundStyle(status.installed ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            Text(status.agent.title).font(.headline)
+            Spacer()
+            headline
+                .font(.caption.weight(.medium)).monospacedDigit()
+                .foregroundStyle(status.installed ? .secondary : .tertiary)
+            PebblePin(isOn: $pinned, label: status.agent.title)
+        }
+    }
+
+    private var detail: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Image(systemName: status.agent.symbol)
-                    .foregroundStyle(status.installed ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                Text(status.agent.title).font(.headline)
-                Spacer()
-                if let bytes = status.residentBytes {
-                    Label(MemoryReader.text(bytes), systemImage: "memorychip")
-                        .font(.caption.weight(.medium)).foregroundStyle(.secondary).monospacedDigit()
-                } else {
-                    Text(status.installed ? "Instalado" : "No instalado")
-                        .font(.caption.weight(.medium)).foregroundStyle(status.installed ? .secondary : .tertiary)
-                }
-                PebblePin(isOn: $pinned, label: status.agent.title)
-            }
             if let usage {
                 if usage.provider != status.agent.title {
                     Text(usage.provider).font(.caption.weight(.medium)).foregroundStyle(.secondary)
@@ -362,11 +383,9 @@ private struct AgentRow: View {
                 if let fraction = session.windowFraction {
                     ProgressView(value: 1 - fraction).tint(fraction > 0.8 ? .orange : .accentColor)
                 }
-            } else if status.installed {
-                Text("Sin historial local reciente").font(.caption).foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.top, 6).padding(.leading, 4)
     }
 }
 
