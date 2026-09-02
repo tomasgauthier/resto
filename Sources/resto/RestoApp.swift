@@ -11,6 +11,7 @@ struct RestoApp: App {
             precondition(LocalSession.selfCheck())
             precondition(MemoryReader.selfCheck())
             precondition(BatteryReader.selfCheck())
+            precondition(PebblePalette.selfCheck())
             exit(0)
         }
     }
@@ -256,11 +257,11 @@ private struct PebbleView: View {
         .frame(width: PebbleController.pillWidth, alignment: .leading)
         .background {
             ZStack {
-                pill.fill(Color(nsColor: .windowBackgroundColor))
-                if let alertTint { pill.fill(alertTint.opacity(0.28)) }
+                pill.fill(PebblePalette.ground.color)
+                if let alertTint { pill.fill(alertTint.color.opacity(PebblePalette.tintAlpha)) }
             }
         }
-        .overlay(pill.stroke(alertTint?.opacity(0.45) ?? Color(nsColor: .separatorColor), lineWidth: 1))
+        .overlay(pill.stroke(alertTint?.color.opacity(0.55) ?? Color(nsColor: .separatorColor), lineWidth: 1))
         .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
         // La sombra se dibuja dentro de la vista: sin este margen la ventana la recorta en cuadrado.
         .padding(PebbleController.shadowMargin)
@@ -270,15 +271,11 @@ private struct PebbleView: View {
     private var pill: RoundedRectangle { RoundedRectangle(cornerRadius: 20) }
 
     /// Manda el peor de los alfilerados: si a cualquiera le queda poco, la pebble entera avisa.
-    private var alertTint: Color? {
-        let remaining = monitor.pebbleOrder
-            .compactMap { monitor.usages[$0]?.fiveHour.map { 100 - $0.usedPercent } }.min()
-        switch remaining {
-        case .some(...10): return .red
-        case .some(...25): return .orange
-        case .some(...50): return .yellow
-        default: return nil
-        }
+    /// El umbral es el mismo que usa la barra, así la píldora y su contenido nunca se
+    /// contradicen — que era lo que dejaba una barra naranja sobre un fondo naranja.
+    private var alertTint: PebblePalette.RGB? {
+        PebblePalette.tint(worstRemaining: monitor.pebbleOrder
+            .compactMap { monitor.usages[$0]?.fiveHour.map { 100 - $0.usedPercent } }.min())
     }
 }
 
@@ -452,19 +449,15 @@ private struct PebbleBatteryLine: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text("Batería").font(.caption2.weight(.semibold)).frame(width: 52, alignment: .leading)
-            Capsule().fill(.quaternary).frame(width: PebbleController.barWidth, height: 5)
-                .overlay(alignment: .leading) {
-                    Capsule().fill(RestoBar.battery(battery))
-                        .frame(width: PebbleController.barWidth * Double(battery.percent) / 100, height: 5)
-                }
+            Text("Batería").font(.caption2.weight(.semibold))
+                .foregroundStyle(PebblePalette.label.color).frame(width: 52, alignment: .leading)
+            PebbleBar(fraction: Double(battery.percent) / 100, ink: PebblePalette.battery(battery))
             Spacer(minLength: 0)
             HStack(spacing: 2) {
                 if battery.isCharging { Image(systemName: "bolt.fill").font(.system(size: 8)) }
                 Text("\(battery.percent)%").font(.caption2.weight(.medium)).monospacedDigit()
             }
-            .foregroundStyle(battery.percent <= 20 && !battery.isPlugged
-                             ? AnyShapeStyle(RestoBar.battery(battery)) : AnyShapeStyle(.secondary))
+            .foregroundStyle(PebblePalette.battery(battery).color)
             .frame(width: 46, alignment: .trailing)
         }
         .frame(height: PebbleController.rowHeight)
@@ -514,40 +507,47 @@ private struct PebbleUsageLine: View {
     let residentBytes: UInt64?
 
     private var remaining: Int? { usage?.fiveHour.map { 100 - $0.usedPercent } }
-    /// Amarillo lo pone el fondo de la pebble; la barra salta el paso para no perderse encima.
-    private var barColor: Color {
-        switch remaining ?? 100 {
-        case ...10: .red
-        case ...25: .orange
-        default: .blue
-        }
-    }
+    private var severity: PebblePalette.Severity { .remaining(remaining ?? 100) }
 
     var body: some View {
         HStack(spacing: 8) {
             Text(agent.shortTitle).font(.caption2.weight(.semibold))
+                .foregroundStyle(PebblePalette.label.color)
                 .frame(width: 52, alignment: .leading).lineLimit(1)
             if let remaining {
-                // ProgressView pierde el color en un panel que nunca es key: barra propia.
-                Capsule().fill(.quaternary).frame(width: PebbleController.barWidth, height: 5)
-                    .overlay(alignment: .leading) {
-                        Capsule().fill(barColor).frame(width: PebbleController.barWidth * Double(remaining) / 100, height: 5)
-                    }
+                PebbleBar(fraction: Double(remaining) / 100, ink: severity.ink)
                 Spacer(minLength: 0)
                 Text("\(remaining)%")
                     .font(.caption2.weight(.medium)).monospacedDigit()
-                    .foregroundStyle(remaining <= 25 ? AnyShapeStyle(barColor) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(severity == .calm ? PebblePalette.label.color : severity.ink.color)
                     .frame(width: 46, alignment: .trailing)
             } else {
                 Text(residentBytes == nil ? "sin cuota" : "en RAM")
-                    .font(.caption2).foregroundStyle(.tertiary)
+                    .font(.caption2).foregroundStyle(PebblePalette.track.color)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(residentBytes.map(MemoryReader.text) ?? "—")
                     .font(.caption2.weight(.medium)).monospacedDigit()
-                    .foregroundStyle(.secondary).frame(width: 46, alignment: .trailing)
+                    .foregroundStyle(PebblePalette.label.color).frame(width: 46, alignment: .trailing)
             }
         }
         .frame(height: PebbleController.rowHeight)
+    }
+}
+
+/// ProgressView pierde el color en un panel que nunca es key, así que la barra es propia.
+/// El canal va sólido y no `.quaternary`: sobre una píldora teñida, un gris translúcido
+/// desaparece y deja de verse dónde termina la barra.
+private struct PebbleBar: View {
+    let fraction: Double
+    let ink: PebblePalette.RGB
+
+    var body: some View {
+        Capsule().fill(PebblePalette.track.color)
+            .frame(width: PebbleController.barWidth, height: 5)
+            .overlay(alignment: .leading) {
+                Capsule().fill(ink.color)
+                    .frame(width: PebbleController.barWidth * max(0, min(1, fraction)), height: 5)
+            }
     }
 }
 
@@ -559,16 +559,13 @@ private struct PebbleMemoryLine: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text("RAM").font(.caption2.weight(.semibold)).frame(width: 52, alignment: .leading)
-            Capsule().fill(.quaternary).frame(width: PebbleController.barWidth, height: 5)
-                .overlay(alignment: .leading) {
-                    Capsule().fill(RestoBar.memory(fraction))
-                        .frame(width: PebbleController.barWidth * fraction, height: 5)
-                }
+            Text("RAM").font(.caption2.weight(.semibold))
+                .foregroundStyle(PebblePalette.label.color).frame(width: 52, alignment: .leading)
+            PebbleBar(fraction: fraction, ink: PebblePalette.memory(fraction))
             Spacer(minLength: 0)
             Text("\(Int((fraction * 100).rounded()))%")
                 .font(.caption2.weight(.medium)).monospacedDigit()
-                .foregroundStyle(fraction > 0.85 ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                .foregroundStyle(PebblePalette.memory(fraction).color)
                 .frame(width: 46, alignment: .trailing)
         }
         .frame(height: PebbleController.rowHeight)
