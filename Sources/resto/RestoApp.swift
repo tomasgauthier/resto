@@ -114,6 +114,28 @@ final class Monitor {
 
 private struct WatcherView: View {
     @Bindable var monitor: Monitor
+    @State private var showAll = false
+
+    /// Un CLI "con datos" es el que tiene cuota real o sesión local; el resto se pliega para
+    /// que el panel no crezca con siete filas que no dicen nada.
+    private var withData: [AgentStatus] {
+        monitor.agents.filter { $0.installed && (monitor.usages[$0.agent] != nil || $0.session != nil) }
+    }
+    private var withoutData: [AgentStatus] {
+        monitor.agents.filter { !($0.installed && (monitor.usages[$0.agent] != nil || $0.session != nil)) }
+    }
+
+    private func row(_ status: AgentStatus) -> some View {
+        AgentRow(
+            status: status,
+            usage: monitor.usages[status.agent],
+            error: monitor.usageErrors[status.agent],
+            pinned: Binding(
+                get: { monitor.pebbleAgents.contains(status.agent) },
+                set: { if $0 { monitor.pebbleAgents.insert(status.agent) } else { monitor.pebbleAgents.remove(status.agent) } }
+            )
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -142,16 +164,17 @@ private struct WatcherView: View {
             // Sin ScrollView a propósito: dentro de un MenuBarExtra(.window) mide cero y la
             // lista sale en blanco. Son siete filas fijas, caben.
             VStack(alignment: .leading, spacing: 14) {
-                ForEach(monitor.agents) { status in
-                    AgentRow(
-                        status: status,
-                        usage: monitor.usages[status.agent],
-                        error: monitor.usageErrors[status.agent],
-                        pinned: Binding(
-                            get: { monitor.pebbleAgents.contains(status.agent) },
-                            set: { if $0 { monitor.pebbleAgents.insert(status.agent) } else { monitor.pebbleAgents.remove(status.agent) } }
-                        )
-                    )
+                ForEach(withData) { status in row(status) }
+            }
+            if !withoutData.isEmpty {
+                DisclosureGroup(isExpanded: $showAll) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(withoutData) { status in row(status) }
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Text("Mostrar \(withoutData.count) sin datos")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                 }
             }
 
