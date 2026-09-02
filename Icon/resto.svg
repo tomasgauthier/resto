@@ -2,18 +2,16 @@
   <rect width="64" height="64" fill="#05012F"/>
   <g fill="none" stroke-width="2.4" stroke-linecap="square">
     <g stroke="#2222ff" transform="translate(-1.2 1.2)">
-      <path d="M9 22 L47 22 L47 42 L9 42 Z"/>
-      <path d="M47 27 L54 27 L54 37 L47 37"/>
-      <path d="M15 27 L15 37"/>
-      <path d="M22 27 L22 37"/>
-      <path d="M29 27 L29 37"/>
+      <path d="M24 16 L40 16 L52 28 L52 44 L40 56 L24 56 L12 44 L12 28 Z"/>
+      <path d="M26 9 L38 9"/>
+      <path d="M32 9 L32 16"/>
+      <path d="M32 36 L43 25"/>
     </g>
     <g stroke="#c0f600">
-      <path d="M9 22 L47 22 L47 42 L9 42 Z"/>
-      <path d="M47 27 L54 27 L54 37 L47 37"/>
-      <path d="M15 27 L15 37"/>
-      <path d="M22 27 L22 37"/>
-      <path d="M29 27 L29 37"/>
+      <path d="M24 16 L40 16 L52 28 L52 44 L40 56 L24 56 L12 44 L12 28 Z"/>
+      <path d="M26 9 L38 9"/>
+      <path d="M32 9 L32 16"/>
+      <path d="M32 36 L43 25"/>
     </g>
   </g>
 </svg>
