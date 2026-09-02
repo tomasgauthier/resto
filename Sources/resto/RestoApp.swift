@@ -208,6 +208,9 @@ private struct WatcherView: View {
         }
         .padding(18)
         .frame(width: 360)
+        // El panel de MenuBarExtra viene con vibrancy: sobre un fondo blanco el texto se
+        // lava. Un color opaco encima la tapa y deja el panel legible sobre lo que sea.
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
