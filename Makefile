@@ -1,6 +1,8 @@
 APP := resto.app
 
-.PHONY: app run clean test
+DEST := /Applications/resto.app
+
+.PHONY: app install run clean test
 
 # macOS sólo trata la app como accesoria (sin Dock) si vive en un bundle con Info.plist.
 app: $(APP)
@@ -15,6 +17,15 @@ $(APP): Info.plist Icon/resto.icns $(wildcard Sources/resto/*.swift)
 	codesign --force --sign - $(APP)
 	touch $(APP)
 
+# La app del día a día vive en /Applications para no depender de dónde esté el repo.
+# El bundle se arma igual acá y se copia: así `make clean` nunca toca /Applications.
+install: app
+	pkill -x resto || true
+	rm -rf $(DEST)
+	cp -R $(APP) $(DEST)
+	open $(DEST)
+
+# Para probar el build sin tocar la copia instalada.
 run: app
 	pkill -x resto || true
 	open $(APP)

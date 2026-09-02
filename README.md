@@ -32,13 +32,16 @@ usa una sola vez por consulta.
 Requiere macOS 14+ y Swift 6.
 
 ```sh
-make app     # compila en release y arma resto.app
-make run     # lo anterior, y la abre
-make test    # self-test de la ventana de 5 h y del parseo de RAM
+make install  # compila, arma el bundle y lo deja en /Applications
+make run      # prueba el build sin tocar la copia instalada
+make test     # self-tests: ventana de 5 h, parseo de RAM, contraste de la pebble
 ```
 
-`resto.app` es una app accesoria (`LSUIElement`): vive en la barra de menú, no en el Dock.
-Para que arranque sola, agrégala en Ajustes → General → Ítems de inicio.
+`resto.app` es una app accesoria (`LSUIElement`): vive en la barra de menú, no en el Dock ni
+en el conmutador de apps. Para que arranque sola, agrégala en Ajustes → General → Ítems de
+inicio, apuntando a `/Applications/resto.app`.
+
+`make clean` sólo borra `.build/` y el bundle local; nunca toca `/Applications`.
 
 ## Ícono
 
