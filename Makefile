@@ -1,0 +1,26 @@
+APP := resto.app
+
+.PHONY: app run clean test
+
+# macOS sólo trata la app como accesoria (sin Dock) si vive en un bundle con Info.plist.
+app: $(APP)
+
+$(APP): Info.plist Icon/resto.icns $(wildcard Sources/resto/*.swift)
+	swift build -c release
+	rm -rf $(APP)
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
+	cp .build/release/resto $(APP)/Contents/MacOS/resto
+	cp Info.plist $(APP)/Contents/Info.plist
+	cp Icon/resto.icns $(APP)/Contents/Resources/resto.icns
+	codesign --force --sign - $(APP)
+	touch $(APP)
+
+run: app
+	pkill -x resto || true
+	open $(APP)
+
+test:
+	swift build && .build/debug/resto --self-test && echo "self-test OK"
+
+clean:
+	rm -rf $(APP) .build

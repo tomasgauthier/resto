@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="resto">
+  <rect width="64" height="64" fill="#05012F"/>
+  <g fill="none" stroke-width="2.4" stroke-linecap="square">
+    <g stroke="#2222ff" transform="translate(-1.2 1.2)">
+      <path d="M9 22 L47 22 L47 42 L9 42 Z"/>
+      <path d="M47 27 L54 27 L54 37 L47 37"/>
+      <path d="M15 27 L15 37"/>
+      <path d="M22 27 L22 37"/>
+      <path d="M29 27 L29 37"/>
+    </g>
+    <g stroke="#c0f600">
+      <path d="M9 22 L47 22 L47 42 L9 42 Z"/>
+      <path d="M47 27 L54 27 L54 37 L47 37"/>
+      <path d="M15 27 L15 37"/>
+      <path d="M22 27 L22 37"/>
+      <path d="M29 27 L29 37"/>
+    </g>
+  </g>
+</svg>
