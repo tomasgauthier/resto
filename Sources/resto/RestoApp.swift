@@ -12,6 +12,7 @@ struct RestoApp: App {
             precondition(MemoryReader.selfCheck())
             precondition(BatteryReader.selfCheck())
             precondition(PebblePalette.selfCheck())
+            precondition(blockingSelfCheck())
             exit(0)
         }
     }
@@ -24,6 +25,31 @@ struct RestoApp: App {
         }
         .menuBarExtraStyle(.window)
     }
+}
+
+/// Corre trabajo que bloquea el hilo (subprocesos, pipes) fuera del pool cooperativo de Swift.
+/// El pool tiene un hilo por core: un `docker ps` colgado después de un sueño se los va comiendo
+/// tick a tick, y ahí la app se queda con los datos viejos sin volver nunca.
+/// ponytail: fuga a lo más un hilo de GCD por lector colgado; `readabilityHandler` si molesta.
+private func blocking<T: Sendable>(_ work: @Sendable @escaping () -> T) async -> T {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global().async { continuation.resume(returning: work()) }
+    }
+}
+
+/// Más lecturas colgadas que cores: si `blocking` corriera en el pool cooperativo, la última
+/// tarea no alcanzaría a partir nunca y esto se quedaría esperando.
+private func blockingSelfCheck() -> Bool {
+    let hung = DispatchSemaphore(value: 0)
+    let done = DispatchSemaphore(value: 0)
+    let count = ProcessInfo.processInfo.activeProcessorCount + 2
+    for _ in 0..<count {
+        Task.detached { _ = await blocking { hung.wait(); return 0 } }
+    }
+    Task.detached { _ = await blocking { 1 }; done.signal() }
+    let ok = done.wait(timeout: .now() + 5) == .success
+    for _ in 0..<count { hung.signal() }
+    return ok
 }
 
 @MainActor
@@ -43,6 +69,9 @@ final class Monitor {
 
     private var timer: Timer?
     private var lastUsageRefresh = Date.distantPast
+    /// Una lectura colgada no debe encolar la siguiente: el tick se salta y ya.
+    private var scanning = false
+    private var readingCodex = false
     private static let agentsKey = "pebbleAgents"
     private static let memoryKey = "pebbleShowsMemory"
     private static let batteryKey = "pebbleShowsBattery"
@@ -58,6 +87,18 @@ final class Monitor {
             Task { @MainActor in self?.refresh() }
         }
         DispatchQueue.main.async { PebbleController.shared.show(monitor: self) }
+        // Al despertar, la primera pasada cae con la red todavía abajo y las cuotas quedan en
+        // error hasta que se cumplan los 120 s. Se reintenta sola cuando ya hay Wi-Fi.
+        // 20 s y no 10: el lector de codex se toma hasta 15 s, y si todavía está adentro el
+        // reintento se lo salta y esa fila queda en error igual de larga.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(20))
+                self?.refresh(force: true)
+            }
+        }
     }
 
     var activeCount: Int { agents.filter(\.hasRecentSession).count }
@@ -75,30 +116,38 @@ final class Monitor {
     }
 
     func refresh(force: Bool = false) {
-        // Escanear los historiales recorre miles de archivos: nunca en el hilo principal.
+        // Escanear los historiales recorre miles de archivos y `ps` bloquea el hilo: ni el
+        // principal ni el pool cooperativo (ver `blocking`).
         // ponytail: rescan completo cada 30 s; cachear por mtime del directorio si algún día pesa.
-        Task.detached { [weak self] in
-            let memory = MemoryReader.perCommand()
-            let scanned = Agent.allCases.map { AgentStatus(agent: $0, memory: memory) }
-            let system = MemoryReader.system()
-            let battery = BatteryReader.read()
-            await MainActor.run {
-                self?.agents = scanned
-                self?.systemMemory = system
-                if self?.battery == nil && battery != nil { PebbleController.shared.resize(rows: (self?.pebbleRowCount ?? 0) + 1) }
-                self?.battery = battery
+        if !scanning {
+            scanning = true
+            Task { [weak self] in
+                let memory = await blocking { MemoryReader.perCommand() }
+                let scanned = await blocking { Agent.allCases.map { AgentStatus(agent: $0, memory: memory) } }
+                let fresh = await blocking { BatteryReader.read() }
+                let system = MemoryReader.system()
+                guard let self else { return }
+                scanning = false
+                agents = scanned
+                systemMemory = system
+                if battery == nil && fresh != nil { PebbleController.shared.resize(rows: pebbleRowCount + 1) }
+                battery = fresh
             }
         }
         guard force || Date.now.timeIntervalSince(lastUsageRefresh) > 120 else { return }
         lastUsageRefresh = .now
-        Task.detached { [weak self] in
-            guard let usage = await CodexUsageReader.read() else {
-                await MainActor.run { self?.usageErrors[.codex] = "No respondió `codex app-server`" }
-                return
-            }
-            await MainActor.run {
-                self?.usages[.codex] = usage
-                self?.usageErrors[.codex] = nil
+        if !readingCodex {
+            readingCodex = true
+            Task { [weak self] in
+                let usage = await blocking { CodexUsageReader.read() }
+                guard let self else { return }
+                readingCodex = false
+                guard let usage else {
+                    usageErrors[.codex] = "No respondió `codex app-server`"
+                    return
+                }
+                usages[.codex] = usage
+                usageErrors[.codex] = nil
             }
         }
         Task { [weak self] in

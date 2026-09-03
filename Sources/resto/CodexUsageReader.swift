@@ -13,7 +13,9 @@ struct UsageSnapshot {
 }
 
 enum CodexUsageReader {
-    static func read() async -> UsageSnapshot? {
+    /// Síncrono a propósito: el bucle de lectura bloquea el hilo, así que quien llame
+    /// debe envolverlo en `blocking` y mantenerlo fuera del pool cooperativo.
+    static func read() -> UsageSnapshot? {
         guard let executable = executablePath() else { return nil }
         let process = Process()
         let input = Pipe()
@@ -27,13 +29,13 @@ enum CodexUsageReader {
         do {
             try process.run()
             write(["method": "initialize", "id": 1, "params": ["clientInfo": ["name": "resto", "version": "0.1"], "capabilities": [:]]], to: input)
-            try? await Task.sleep(for: .milliseconds(200))
+            Thread.sleep(forTimeInterval: 0.2)
             write(["method": "initialized", "params": [:]], to: input)
             write(["method": "account/rateLimits/read", "id": 2], to: input)
 
             // La respuesta puede tardar varios segundos y cerrar stdin antes mata al servidor:
             // se lee hasta encontrarla, con el cierre programado como único tope.
-            // ponytail: bloquea un hilo del pool hasta 15 s cada 2 min; a callbacks si molesta.
+            // ponytail: bloquea un hilo de GCD hasta 15 s cada 2 min; a callbacks si molesta.
             let stdin = input.fileHandleForWriting
             DispatchQueue.global().asyncAfter(deadline: .now() + 15) { try? stdin.close() }
             var buffer = Data()
