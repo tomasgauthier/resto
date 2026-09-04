@@ -579,9 +579,10 @@ private struct PebbleUsageLine: View {
                 Text(residentBytes == nil ? "sin cuota" : "en RAM")
                     .font(.caption2).foregroundStyle(PebblePalette.track.color)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                // Sin ancho fijo: "816,8 MB" no cabe en los 46 pt que le bastan a un "100%".
                 Text(residentBytes.map(MemoryReader.text) ?? "—")
-                    .font(.caption2.weight(.medium)).monospacedDigit()
-                    .foregroundStyle(PebblePalette.label.color).frame(width: 46, alignment: .trailing)
+                    .font(.caption2.weight(.medium)).monospacedDigit().fixedSize()
+                    .foregroundStyle(PebblePalette.label.color)
             }
         }
         .frame(height: PebbleController.rowHeight)
