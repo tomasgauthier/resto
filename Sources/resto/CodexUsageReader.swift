@@ -12,6 +12,34 @@ struct UsageSnapshot {
     let weekly: UsageWindow?
 }
 
+extension UsageSnapshot {
+    /// Al cambiar de ventana la lectura llega a medias: la API deja `five_hour` en blanco y el
+    /// caché en disco ya venció. Pisar lo anterior con eso manda la fila de la pebble a
+    /// "en RAM" hasta el siguiente tick, así que se conserva lo último conocido de cada ventana.
+    /// ponytail: se queda con la ventana vencida hasta que llegue una nueva; si algún lector
+    /// pasa horas sin ventana, ahí sí conviene una edad máxima o caer al semanal.
+    func merging(over previous: UsageSnapshot?) -> UsageSnapshot {
+        UsageSnapshot(provider: provider,
+                      fiveHour: fiveHour ?? previous?.fiveHour,
+                      weekly: weekly ?? previous?.weekly)
+    }
+
+    static func selfCheck() -> Bool {
+        let old = UsageSnapshot(provider: "viejo",
+                                fiveHour: UsageWindow(usedPercent: 4, resetsAt: .now),
+                                weekly: UsageWindow(usedPercent: 27, resetsAt: .now))
+        let partial = UsageSnapshot(provider: "nuevo", fiveHour: nil, weekly: old.weekly)
+        let merged = partial.merging(over: old)
+        let fresh = UsageSnapshot(provider: "nuevo",
+                                  fiveHour: UsageWindow(usedPercent: 9, resetsAt: .now),
+                                  weekly: nil)
+        return merged.fiveHour?.usedPercent == 4 && merged.provider == "nuevo"
+            && fresh.merging(over: old).fiveHour?.usedPercent == 9
+            && fresh.merging(over: old).weekly?.usedPercent == 27
+            && partial.merging(over: nil).fiveHour == nil
+    }
+}
+
 enum CodexUsageReader {
     /// Síncrono a propósito: el bucle de lectura bloquea el hilo, así que quien llame
     /// debe envolverlo en `blocking` y mantenerlo fuera del pool cooperativo.

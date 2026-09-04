@@ -12,6 +12,7 @@ struct RestoApp: App {
             precondition(MemoryReader.selfCheck())
             precondition(BatteryReader.selfCheck())
             precondition(PebblePalette.selfCheck())
+            precondition(UsageSnapshot.selfCheck())
             precondition(blockingSelfCheck())
             exit(0)
         }
@@ -115,6 +116,13 @@ final class Monitor {
         PebbleController.shared.resize(rows: pebbleRowCount)
     }
 
+    /// Único punto donde entra una lectura de cuota: fusiona con lo anterior para que una
+    /// lectura a medias no borre la ventana que ya se mostraba (ver `UsageSnapshot.merging`).
+    private func store(_ usage: UsageSnapshot, for agent: Agent) {
+        usages[agent] = usage.merging(over: usages[agent])
+        usageErrors[agent] = nil
+    }
+
     func refresh(force: Bool = false) {
         // Escanear los historiales recorre miles de archivos y `ps` bloquea el hilo: ni el
         // principal ni el pool cooperativo (ver `blocking`).
@@ -146,14 +154,12 @@ final class Monitor {
                     usageErrors[.codex] = "No respondió `codex app-server`"
                     return
                 }
-                usages[.codex] = usage
-                usageErrors[.codex] = nil
+                store(usage, for: .codex)
             }
         }
         Task { [weak self] in
             if let usage = await ClaudeUsageReader.read() {
-                self?.usages[.claude] = usage
-                self?.usageErrors[.claude] = nil
+                self?.store(usage, for: .claude)
             } else {
                 self?.usageErrors[.claude] = "Abre Claude Code para actualizar la cuota"
             }
@@ -161,8 +167,7 @@ final class Monitor {
         Task { [weak self] in
             switch await KimiUsageReader.read() {
             case .success(let usage):
-                self?.usages[.kimi] = usage
-                self?.usageErrors[.kimi] = nil
+                self?.store(usage, for: .kimi)
             case .failure(let error): self?.usageErrors[.kimi] = error.message
             }
         }
