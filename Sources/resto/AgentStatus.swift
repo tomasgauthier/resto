@@ -77,7 +77,7 @@ struct AgentStatus: Identifiable {
 
     /// El PATH que hereda una app de GUI es mínimo, así que se pregunta al shell de login.
     /// ponytail: se resuelve una vez por lanzamiento (~40 ms); reinicia la app si instalas un CLI nuevo.
-    private static let searchPaths: [String] = {
+    static let loginPath: String = {
         let process = Process()
         process.executableURL = URL(filePath: "/bin/zsh")
         process.arguments = ["-lc", "printf %s \"$PATH\""]
@@ -89,8 +89,10 @@ struct AgentStatus: Identifiable {
         let fallbacks = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
                          FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/bin").path()]
         let env = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        return Array(Set((shellPath + ":" + env).split(separator: ":").map(String.init) + fallbacks))
+        return ([shellPath, env] + fallbacks).filter { !$0.isEmpty }.joined(separator: ":")
     }()
+
+    private static let searchPaths: [String] = Array(Set(loginPath.split(separator: ":").map(String.init)))
 
     private static func commandExists(_ command: String) -> Bool {
         searchPaths.contains { FileManager.default.isExecutableFile(atPath: URL(filePath: $0).appending(path: command).path()) }

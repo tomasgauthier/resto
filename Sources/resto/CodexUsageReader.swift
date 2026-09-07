@@ -53,13 +53,23 @@ enum CodexUsageReader {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+        // Un `codex` instalado por npm es un script con `#!/usr/bin/env node`, y el PATH que
+        // hereda una app de GUI no trae node: sin esto el hijo muere apenas parte.
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = AgentStatus.loginPath
+        process.environment = environment
 
         do {
             try process.run()
-            write(["method": "initialize", "id": 1, "params": ["clientInfo": ["name": "resto", "version": "0.1"], "capabilities": [:]]], to: input)
+            let opened = write(["method": "initialize", "id": 1, "params": ["clientInfo": ["name": "resto", "version": "0.1"], "capabilities": [:]]], to: input)
             Thread.sleep(forTimeInterval: 0.2)
-            write(["method": "initialized", "params": [:]], to: input)
-            write(["method": "account/rateLimits/read", "id": 2], to: input)
+            // Si el CLI no arrancó, acá el pipe ya está roto: se corta la lectura en vez de seguir.
+            guard opened,
+                  write(["method": "initialized", "params": [:]], to: input),
+                  write(["method": "account/rateLimits/read", "id": 2], to: input) else {
+                process.terminate()
+                return nil
+            }
 
             // La respuesta puede tardar varios segundos y cerrar stdin antes mata al servidor:
             // se lee hasta encontrarla, con el cierre programado como único tope.
@@ -91,10 +101,25 @@ enum CodexUsageReader {
         return candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }).map { URL(fileURLWithPath: $0) }
     }
 
-    private static func write(_ message: [String: Any], to pipe: Pipe) {
-        guard let data = try? JSONSerialization.data(withJSONObject: message), var line = String(data: data, encoding: .utf8) else { return }
+    /// `write(contentsOf:)` y no `write(_:)`: con SIGPIPE ignorado, el que no lanza convierte el
+    /// EPIPE en una excepción de ObjC que Swift no puede atrapar, y ahí muere igual.
+    private static func write(_ message: [String: Any], to pipe: Pipe) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: message), var line = String(data: data, encoding: .utf8) else { return false }
         line += "\n"
-        pipe.fileHandleForWriting.write(Data(line.utf8))
+        return (try? pipe.fileHandleForWriting.write(contentsOf: Data(line.utf8))) != nil
+    }
+
+    /// Escribirle a un hijo que ya murió da EPIPE. Sin SIGPIPE ignorado eso mataba la app entera
+    /// —sin siquiera dejar reporte de crash— y basta con que el CLI no arranque para gatillarlo.
+    static func selfCheck() -> Bool {
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/false")
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return write(["method": "ping"], to: input) == false
     }
 
     private static func decode(_ data: Data) -> UsageSnapshot? {

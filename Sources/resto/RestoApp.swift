@@ -7,12 +7,16 @@ struct RestoApp: App {
     @State private var monitor = Monitor()
 
     init() {
+        // Escribirle a un CLI que ya murió da EPIPE, y con la disposición por omisión eso mata
+        // la app entera sin dejar reporte de crash. Ignorado, el error vuelve como `write` fallida.
+        signal(SIGPIPE, SIG_IGN)
         if CommandLine.arguments.contains("--self-test") {
             precondition(LocalSession.selfCheck())
             precondition(MemoryReader.selfCheck())
             precondition(BatteryReader.selfCheck())
             precondition(PebblePalette.selfCheck())
             precondition(UsageSnapshot.selfCheck())
+            precondition(CodexUsageReader.selfCheck())
             precondition(blockingSelfCheck())
             exit(0)
         }
