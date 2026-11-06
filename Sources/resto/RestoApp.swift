@@ -352,8 +352,8 @@ private struct PebbleView: View {
 /// por la derecha.
 private struct PebbleRing: View {
     let gauge: PebbleGauge
-    static let diameter: CGFloat = 34
-    private static let line: CGFloat = 3.5
+    static let diameter: CGFloat = 34 * PebbleController.scale
+    private static let line: CGFloat = 3.5 * PebbleController.scale
     /// Medio hueco arriba y abajo, en fracción de vuelta: el lugar del número y de los puntos.
     private static let gap = 0.11
 
@@ -366,17 +366,17 @@ private struct PebbleRing: View {
             if filled > 0 { segment(from: Self.gap, length: min(filled, half), gauge.ink) }
             if filled > half { segment(from: 0.5 + Self.gap, length: filled - half, gauge.ink) }
             Image(systemName: gauge.symbol)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 11 * PebbleController.scale, weight: .semibold))
                 .foregroundStyle(PebblePalette.label.color)
             Text(gauge.text)
-                .font(.system(size: 10, weight: .bold, design: .rounded)).monospacedDigit()
+                .font(.system(size: 10 * PebbleController.scale, weight: .bold, design: .rounded)).monospacedDigit()
                 .foregroundStyle(gauge.ink.color)
                 .offset(y: -Self.diameter / 2)
             if let dots = gauge.dots {
-                HStack(spacing: 2) {
+                HStack(spacing: 2 * PebbleController.scale) {
                     ForEach(0..<4, id: \.self) { i in
                         Circle().fill((i < dots ? PebblePalette.label : PebblePalette.track).color)
-                            .frame(width: 3, height: 3)
+                            .frame(width: 3 * PebbleController.scale, height: 3 * PebbleController.scale)
                     }
                 }
                 .offset(y: Self.diameter / 2)
@@ -399,11 +399,13 @@ private struct PebbleRing: View {
 @MainActor
 private final class PebbleController {
     static let shared = PebbleController()
-    static let pillWidth: CGFloat = 52
+    /// La perilla del tamaño: todo lo que mide la gota se multiplica por esto.
+    static let scale: CGFloat = 0.85
+    static let pillWidth: CGFloat = 52 * scale
     /// Un anillo con su número arriba y sus puntos abajo.
-    static let rowHeight: CGFloat = PebbleRing.diameter + 12
-    static let rowSpacing: CGFloat = 4
-    static let verticalPadding: CGFloat = 10
+    static let rowHeight: CGFloat = PebbleRing.diameter + 12 * scale
+    static let rowSpacing: CGFloat = 4 * scale
+    static let verticalPadding: CGFloat = 10 * scale
     /// Aire transparente alrededor de la gota para que quepa la sombra sin recortarse.
     static let shadowMargin: CGFloat = 14
     private static let windowWidth = pillWidth + shadowMargin * 2
