@@ -8,7 +8,10 @@ struct PebbleGauge {
     let value: Int?
     /// Cuánto del arco va lleno, 0…1.
     let fraction: Double
+    /// El color del número: avisa la severidad.
     let ink: PebblePalette.RGB
+    /// El color del arco: uno es sólido; varios, un degradado que da la vuelta.
+    let arc: [PebblePalette.RGB]
     /// Puntos encendidos de 4; `nil` = el anillo no lleva puntos.
     let dots: Int?
     let accessibility: String
@@ -24,14 +27,15 @@ struct PebbleGauge {
         default: "terminal"
         }
         guard let left = fiveHourLeft else {
-            return PebbleGauge(symbol: symbol, value: nil, fraction: 0, ink: PebblePalette.dim, dots: nil,
+            return PebbleGauge(symbol: symbol, value: nil, fraction: 0, ink: PebblePalette.dim,
+                               arc: PebblePalette.brand(agent), dots: nil,
                                accessibility: "\(agent.shortTitle): sin cuota")
         }
         // Hacia arriba: un 3% semanal todavía es algo, y un punto apagado diría que no queda nada.
         let dots = weeklyLeft.map { Int((Double(max(0, min(100, $0))) / 25).rounded(.up)) }
         let week = weeklyLeft.map { ", semana \($0)%" } ?? ""
         return PebbleGauge(symbol: symbol, value: left, fraction: Double(left) / 100,
-                           ink: PebblePalette.Severity.remaining(left).ink, dots: dots,
+                           ink: PebblePalette.Severity.remaining(left).ink, arc: PebblePalette.brand(agent), dots: dots,
                            accessibility: "\(agent.shortTitle): queda \(left)%\(week)")
     }
 
@@ -39,12 +43,13 @@ struct PebbleGauge {
     static func memory(used fraction: Double) -> PebbleGauge {
         let percent = Int((fraction * 100).rounded())
         return PebbleGauge(symbol: "memorychip", value: percent, fraction: fraction,
-                           ink: PebblePalette.memory(fraction), dots: nil, accessibility: "RAM usada \(percent)%")
+                           ink: PebblePalette.memory(fraction), arc: [PebblePalette.memory(fraction)], dots: nil, accessibility: "RAM usada \(percent)%")
     }
 
     static func battery(_ battery: Battery) -> PebbleGauge {
         PebbleGauge(symbol: battery.isCharging ? "bolt.fill" : "battery.75", value: battery.percent,
-                    fraction: Double(battery.percent) / 100, ink: PebblePalette.battery(battery), dots: nil,
+                    fraction: Double(battery.percent) / 100, ink: PebblePalette.battery(battery),
+                    arc: [PebblePalette.battery(battery)], dots: nil,
                     accessibility: "Batería \(battery.percent)%")
     }
 }
@@ -106,7 +111,25 @@ enum PebblePalette {
 
     // ── métricas que no son cuota ────────────────────────────────────────
     static let memoryInk = RGB(r: 0.75, g: 0.55, b: 1)
+    /// Colores de marca a ojo, no de un manual: se ajustan acá si algún tono no calza.
+    static let claudeInk = RGB(r: 0.851, g: 0.467, b: 0.341)   // arcilla de Anthropic
+    static let codexInk = RGB(r: 0.063, g: 0.639, b: 0.498)    // verde de ChatGPT
+    static let kimiInk = RGB(r: 0.09, g: 0.51, b: 1)
+    /// El arcoíris del isotipo de Antigravity, en el orden en que da la vuelta.
+    static let agyRainbow = [RGB(r: 0.259, g: 0.522, b: 0.957), RGB(r: 0.918, g: 0.263, b: 0.208),
+                             RGB(r: 0.984, g: 0.737, b: 0.020), RGB(r: 0.204, g: 0.659, b: 0.325)]
     static let batteryInk = RGB(r: 0.19, g: 0.82, b: 0.35)
+
+    // ── marca: el arco de cada agente ────────────────────────────────────
+    static func brand(_ agent: Agent) -> [RGB] {
+        switch agent {
+        case .claude: [claudeInk]
+        case .codex: [codexInk]
+        case .kimi: [kimiInk]
+        case .agy: agyRainbow
+        default: [label]
+        }
+    }
 
     static func memory(_ fraction: Double) -> RGB { fraction > 0.85 ? Severity.warning.ink : memoryInk }
     static func battery(_ battery: Battery) -> RGB {
@@ -141,6 +164,19 @@ enum PebblePalette {
         // La RAM muestra lo usado, en morado, sin puntos.
         let ram = PebbleGauge.memory(used: 0.71)
         guard ram.value == 71, ram.ink == memoryInk, ram.dots == nil else { return false }
+
+        // C6: el arco lleva el color de la marca y el número sigue avisando la severidad.
+        let low = PebbleGauge.quota(agent: .claude, fiveHourLeft: 15, weeklyLeft: 80)
+        guard low.arc == [claudeInk], low.ink == Severity.warning.ink else { return false }
+        guard PebbleGauge.quota(agent: .codex, fiveHourLeft: 90, weeklyLeft: nil).arc == [codexInk] else { return false }
+        // Agy: el arcoíris del isotipo, con o sin cuota.
+        guard brand(.agy).count == 4, PebbleGauge.quota(agent: .agy, fiveHourLeft: nil, weeklyLeft: nil).arc == brand(.agy) else { return false }
+        // Un arco es un gráfico: piso 3:1 contra la gota, y distinguible del canal vacío.
+        for agent in Agent.allCases {
+            for ink in brand(agent) {
+                guard contrast(ink, ground) >= 3, contrast(track, ink) >= 2 else { return false }
+            }
+        }
 
         // C5: todo lo que se dibuja sobre la gota oscura se lee.
         let inks = Severity.allCases.map(\.ink) + [memoryInk, batteryInk]

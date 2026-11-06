@@ -361,10 +361,10 @@ private struct PebbleRing: View {
         let half = 0.5 - 2 * Self.gap
         let filled = max(0, min(1, gauge.fraction)) * 2 * half
         ZStack {
-            segment(from: Self.gap, length: half, PebblePalette.track)
-            segment(from: 0.5 + Self.gap, length: half, PebblePalette.track)
-            if filled > 0 { segment(from: Self.gap, length: min(filled, half), gauge.ink) }
-            if filled > half { segment(from: 0.5 + Self.gap, length: filled - half, gauge.ink) }
+            segment(from: Self.gap, length: half, [PebblePalette.track])
+            segment(from: 0.5 + Self.gap, length: half, [PebblePalette.track])
+            if filled > 0 { segment(from: Self.gap, length: min(filled, half), gauge.arc) }
+            if filled > half { segment(from: 0.5 + Self.gap, length: filled - half, gauge.arc) }
             Image(systemName: gauge.symbol)
                 .font(.system(size: 11 * PebbleController.scale, weight: .semibold))
                 .foregroundStyle(PebblePalette.label.color)
@@ -388,10 +388,14 @@ private struct PebbleRing: View {
     }
 
     /// El trim de un círculo parte a las 3 en punto; rotado 90° parte abajo.
-    private func segment(from start: Double, length: Double, _ ink: PebblePalette.RGB) -> some View {
-        Circle().trim(from: start, to: start + length)
+    /// Con varios colores el degradado da la vuelta completa al círculo, así cada tramo lleno
+    /// muestra la parte del arcoíris que le toca; se cierra con el primero para no dejar costura.
+    private func segment(from start: Double, length: Double, _ inks: [PebblePalette.RGB]) -> some View {
+        let colors = inks.map(\.color)
+        return Circle().trim(from: start, to: start + length)
             .rotation(.degrees(90))
-            .stroke(ink.color, style: StrokeStyle(lineWidth: Self.line, lineCap: .round))
+            .stroke(AngularGradient(colors: colors.count > 1 ? colors + [colors[0]] : colors + colors, center: .center),
+                    style: StrokeStyle(lineWidth: Self.line, lineCap: .round))
             .frame(width: Self.diameter, height: Self.diameter)
     }
 }
