@@ -177,8 +177,7 @@ final class Monitor {
             }
         }
         switch AgyUsageReader.read() {
-        // Sin `merging`: el archivo ya trae todo lo conocido, y fusionar dejaría pegada una ventana vencida.
-        case .success(let usage): usages[.agy] = usage; usageErrors[.agy] = nil
+        case .success(let usage): store(usage, for: .agy)
         case .failure(let error): usageErrors[.agy] = error.message
         }
         for agent in [Agent.gemini, .opencode, .copilot] {

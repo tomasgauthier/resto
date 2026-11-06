@@ -16,27 +16,35 @@ extension UsageSnapshot {
     /// Al cambiar de ventana la lectura llega a medias: la API deja `five_hour` en blanco y el
     /// caché en disco ya venció. Pisar lo anterior con eso manda la fila de la pebble a
     /// "en RAM" hasta el siguiente tick, así que se conserva lo último conocido de cada ventana.
-    /// ponytail: se queda con la ventana vencida hasta que llegue una nueva; si algún lector
-    /// pasa horas sin ventana, ahí sí conviene una edad máxima o caer al semanal.
-    func merging(over previous: UsageSnapshot?) -> UsageSnapshot {
-        UsageSnapshot(provider: provider,
-                      fiveHour: fiveHour ?? previous?.fiveHour,
-                      weekly: weekly ?? previous?.weekly)
+    /// Lo heredado sólo vale mientras su ventana siga abierta: una que ya reinició mostraría el
+    /// porcentaje de la anterior (un "90 % usado" que en verdad está en cero).
+    func merging(over previous: UsageSnapshot?, now: Date = .now) -> UsageSnapshot {
+        func open(_ window: UsageWindow?) -> UsageWindow? { window.flatMap { $0.resetsAt > now ? $0 : nil } }
+        return UsageSnapshot(provider: provider,
+                             fiveHour: fiveHour ?? open(previous?.fiveHour),
+                             weekly: weekly ?? open(previous?.weekly))
     }
 
     static func selfCheck() -> Bool {
+        let now = Date.now, later = now.addingTimeInterval(3600)
         let old = UsageSnapshot(provider: "viejo",
-                                fiveHour: UsageWindow(usedPercent: 4, resetsAt: .now),
-                                weekly: UsageWindow(usedPercent: 27, resetsAt: .now))
+                                fiveHour: UsageWindow(usedPercent: 4, resetsAt: later),
+                                weekly: UsageWindow(usedPercent: 27, resetsAt: later))
         let partial = UsageSnapshot(provider: "nuevo", fiveHour: nil, weekly: old.weekly)
-        let merged = partial.merging(over: old)
+        let merged = partial.merging(over: old, now: now)
         let fresh = UsageSnapshot(provider: "nuevo",
-                                  fiveHour: UsageWindow(usedPercent: 9, resetsAt: .now),
+                                  fiveHour: UsageWindow(usedPercent: 9, resetsAt: later),
                                   weekly: nil)
+        // Una ventana que ya reinició no se hereda: su porcentaje es de la ventana anterior.
+        let expired = UsageSnapshot(provider: "viejo",
+                                    fiveHour: UsageWindow(usedPercent: 90, resetsAt: now.addingTimeInterval(-1)),
+                                    weekly: old.weekly)
         return merged.fiveHour?.usedPercent == 4 && merged.provider == "nuevo"
-            && fresh.merging(over: old).fiveHour?.usedPercent == 9
-            && fresh.merging(over: old).weekly?.usedPercent == 27
-            && partial.merging(over: nil).fiveHour == nil
+            && fresh.merging(over: old, now: now).fiveHour?.usedPercent == 9
+            && fresh.merging(over: old, now: now).weekly?.usedPercent == 27
+            && partial.merging(over: nil, now: now).fiveHour == nil
+            && partial.merging(over: expired, now: now).fiveHour == nil
+            && partial.merging(over: expired, now: now).weekly?.usedPercent == 27
     }
 }
 

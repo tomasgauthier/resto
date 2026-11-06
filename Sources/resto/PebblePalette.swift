@@ -20,6 +20,7 @@ struct PebbleGauge {
         case .claude: "asterisk"
         case .codex: "hexagon"
         case .kimi: "moon"
+        case .agy: "sparkle"
         default: "terminal"
         }
         guard let left = fiveHourLeft else {
