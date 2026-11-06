@@ -289,63 +289,118 @@ private struct PebblePin: View {
     }
 }
 
-/// La pebble es un titular fijo y arrastrable: el detalle y la configuración están en el menu bar.
+/// La gota es un titular fijo pegado al borde: el detalle y la configuración están en el menu bar.
 private struct PebbleView: View {
     let monitor: Monitor
+    @State private var dragStart: (mouse: CGFloat, origin: CGFloat)?
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: PebbleController.rowSpacing) {
-            ForEach(monitor.pebbleOrder) { agent in
-                PebbleUsageLine(agent: agent,
-                                usage: monitor.usages[agent],
-                                residentBytes: monitor.agents.first { $0.agent == agent }?.residentBytes)
-            }
-            if let memory = monitor.systemMemory, monitor.pebbleShowsMemory {
-                PebbleMemoryLine(used: memory.used, total: memory.total)
-            }
-            if let battery = monitor.battery, monitor.pebbleShowsBattery {
-                PebbleBatteryLine(battery: battery)
-            }
-            if monitor.pebbleOrder.isEmpty && !monitor.pebbleShowsMemory && !monitor.pebbleShowsBattery {
-                Text("Nada alfilerado").font(.caption2).foregroundStyle(.tertiary)
-                    .frame(height: PebbleController.rowHeight)
-            }
+    private var gauges: [PebbleGauge] {
+        var all = monitor.pebbleOrder.map { agent in
+            let usage = monitor.usages[agent]
+            return PebbleGauge.quota(agent: agent,
+                                     fiveHourLeft: usage?.fiveHour.map { 100 - $0.usedPercent },
+                                     weeklyLeft: usage?.weekly.map { 100 - $0.usedPercent })
         }
-        .padding(.horizontal, 12).padding(.vertical, PebbleController.verticalPadding)
-        .frame(width: PebbleController.pillWidth, alignment: .leading)
-        .background {
-            ZStack {
-                pill.fill(PebblePalette.ground.color)
-                if let alertTint { pill.fill(alertTint.color.opacity(PebblePalette.tintAlpha)) }
-            }
+        if let memory = monitor.systemMemory, monitor.pebbleShowsMemory {
+            all.append(.memory(used: Double(memory.used) / Double(memory.total)))
         }
-        .overlay(pill.stroke(alertTint?.color.opacity(0.55) ?? Color(nsColor: .separatorColor), lineWidth: 1))
-        .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
-        // La sombra se dibuja dentro de la vista: sin este margen la ventana la recorta en cuadrado.
-        .padding(PebbleController.shadowMargin)
-        .accessibilityLabel("Cuota restante")
+        if let battery = monitor.battery, monitor.pebbleShowsBattery { all.append(.battery(battery)) }
+        return all
     }
 
-    private var pill: RoundedRectangle { RoundedRectangle(cornerRadius: 20) }
+    var body: some View {
+        VStack(spacing: PebbleController.rowSpacing) {
+            ForEach(Array(gauges.enumerated()), id: \.offset) { _, gauge in PebbleRing(gauge: gauge) }
+            if gauges.isEmpty {
+                Image(systemName: "pin.slash").font(.caption).foregroundStyle(PebblePalette.dim.color)
+                    .frame(height: PebbleController.rowHeight).help("Nada alfilerado")
+            }
+        }
+        .padding(.vertical, PebbleController.verticalPadding)
+        .frame(width: PebbleController.pillWidth)
+        .background(drop.fill(PebblePalette.ground.color))
+        .overlay(drop.stroke(.white.opacity(0.1), lineWidth: 1))
+        .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+        // La sombra se dibuja dentro de la vista: sin este margen la ventana la recorta en cuadrado.
+        .padding(PebbleController.shadowMargin)
+        // Sólo en vertical: el borde derecho es su lugar. Se sigue al mouse en pantalla y no a
+        // la traslación del gesto, que se mide contra una ventana que se está moviendo.
+        .gesture(DragGesture(minimumDistance: 1)
+            .onChanged { _ in
+                let mouse = NSEvent.mouseLocation.y
+                let start = dragStart ?? (mouse, PebbleController.shared.originY)
+                dragStart = start
+                PebbleController.shared.dock(y: start.origin + mouse - start.mouse)
+            }
+            .onEnded { _ in dragStart = nil })
+    }
 
-    /// Manda el peor de los alfilerados: si a cualquiera le queda poco, la pebble entera avisa.
-    /// El umbral es el mismo que usa la barra, así la píldora y su contenido nunca se
-    /// contradicen — que era lo que dejaba una barra naranja sobre un fondo naranja.
-    private var alertTint: PebblePalette.RGB? {
-        PebblePalette.tint(worstRemaining: monitor.pebbleOrder
-            .compactMap { monitor.usages[$0]?.fiveHour.map { 100 - $0.usedPercent } }.min())
+    /// Recta del lado de la pantalla, redonda hacia adentro: una gota que cuelga del borde.
+    private var drop: UnevenRoundedRectangle {
+        let r = PebbleController.pillWidth / 2
+        return UnevenRoundedRectangle(topLeadingRadius: r, bottomLeadingRadius: r,
+                                      bottomTrailingRadius: 0, topTrailingRadius: 0)
+    }
+}
+
+/// El medidor del iPhone: número arriba, ícono al centro, arco partido a los costados y la
+/// cuota semanal en puntos abajo. El arco se llena desde abajo, sube por la izquierda y baja
+/// por la derecha.
+private struct PebbleRing: View {
+    let gauge: PebbleGauge
+    static let diameter: CGFloat = 34
+    private static let line: CGFloat = 3.5
+    /// Medio hueco arriba y abajo, en fracción de vuelta: el lugar del número y de los puntos.
+    private static let gap = 0.11
+
+    var body: some View {
+        let half = 0.5 - 2 * Self.gap
+        let filled = max(0, min(1, gauge.fraction)) * 2 * half
+        ZStack {
+            segment(from: Self.gap, length: half, PebblePalette.track)
+            segment(from: 0.5 + Self.gap, length: half, PebblePalette.track)
+            if filled > 0 { segment(from: Self.gap, length: min(filled, half), gauge.ink) }
+            if filled > half { segment(from: 0.5 + Self.gap, length: filled - half, gauge.ink) }
+            Image(systemName: gauge.symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(PebblePalette.label.color)
+            Text(gauge.text)
+                .font(.system(size: 10, weight: .bold, design: .rounded)).monospacedDigit()
+                .foregroundStyle(gauge.ink.color)
+                .offset(y: -Self.diameter / 2)
+            if let dots = gauge.dots {
+                HStack(spacing: 2) {
+                    ForEach(0..<4, id: \.self) { i in
+                        Circle().fill((i < dots ? PebblePalette.label : PebblePalette.track).color)
+                            .frame(width: 3, height: 3)
+                    }
+                }
+                .offset(y: Self.diameter / 2)
+            }
+        }
+        .frame(width: Self.diameter + Self.line, height: PebbleController.rowHeight)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(gauge.accessibility)
+    }
+
+    /// El trim de un círculo parte a las 3 en punto; rotado 90° parte abajo.
+    private func segment(from start: Double, length: Double, _ ink: PebblePalette.RGB) -> some View {
+        Circle().trim(from: start, to: start + length)
+            .rotation(.degrees(90))
+            .stroke(ink.color, style: StrokeStyle(lineWidth: Self.line, lineCap: .round))
+            .frame(width: Self.diameter, height: Self.diameter)
     }
 }
 
 @MainActor
 private final class PebbleController {
     static let shared = PebbleController()
-    static let pillWidth: CGFloat = 240
-    static let barWidth: CGFloat = 88
-    static let rowHeight: CGFloat = 14
-    static let rowSpacing: CGFloat = 5
-    static let verticalPadding: CGFloat = 9
-    /// Aire transparente alrededor de la píldora para que quepa la sombra sin recortarse.
+    static let pillWidth: CGFloat = 52
+    /// Un anillo con su número arriba y sus puntos abajo.
+    static let rowHeight: CGFloat = PebbleRing.diameter + 12
+    static let rowSpacing: CGFloat = 4
+    static let verticalPadding: CGFloat = 10
+    /// Aire transparente alrededor de la gota para que quepa la sombra sin recortarse.
     static let shadowMargin: CGFloat = 14
     private static let windowWidth = pillWidth + shadowMargin * 2
     static func windowHeight(rows: Int) -> CGFloat {
@@ -353,11 +408,14 @@ private final class PebbleController {
     }
     private var panel: NSPanel?
 
+    var originY: CGFloat { panel?.frame.minY ?? 0 }
+
     func show(monitor: Monitor) {
         let height = Self.windowHeight(rows: monitor.pebbleRowCount)
         if let panel {
             panel.contentView = NSHostingView(rootView: PebbleView(monitor: monitor))
             panel.setContentSize(NSSize(width: Self.windowWidth, height: height))
+            dock()
             panel.orderFrontRegardless()
             return
         }
@@ -368,25 +426,28 @@ private final class PebbleController {
             defer: false
         )
         panel.isFloatingPanel = true
-        panel.appearance = NSAppearance(named: .aqua)  // la pebble siempre en claro
-        panel.isMovableByWindowBackground = true
+        panel.appearance = NSAppearance(named: .darkAqua)  // la gota siempre en oscuro
+        panel.isMovableByWindowBackground = false  // el arrastre lo maneja la vista, sólo en vertical
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = false  // la sombra la dibuja SwiftUI sobre la píldora, no AppKit sobre el marco
+        panel.hasShadow = false  // la sombra la dibuja SwiftUI sobre la gota, no AppKit sobre el marco
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.contentView = NSHostingView(rootView: PebbleView(monitor: monitor))
         if let screen = NSScreen.main {
-            panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.maxX - Self.windowWidth - 8,
-                                         y: screen.visibleFrame.minY + 28 - Self.shadowMargin))
+            panel.setFrameOrigin(NSPoint(x: 0, y: screen.visibleFrame.midY - height / 2))
         }
+        // El autosave guarda la altura elegida; el ancho y la x los manda siempre el borde.
         panel.setFrameAutosaveName("pebble")
-        // El autosave restaura el alto viejo: la altura la manda siempre el número de filas.
         panel.setFrameUsingName("pebble")
         panel.setContentSize(NSSize(width: Self.windowWidth, height: height))
         self.panel = panel
+        dock()
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { _ in Task { @MainActor in PebbleController.shared.dock() } }
         panel.orderFrontRegardless()
     }
 
@@ -394,6 +455,19 @@ private final class PebbleController {
 
     func resize(rows: Int) {
         panel?.setContentSize(NSSize(width: Self.windowWidth, height: Self.windowHeight(rows: rows)))
+        dock()
+    }
+
+    /// Pega la gota al borde derecho de su pantalla, a la altura pedida y sin salirse de ella.
+    /// La sombra puede quedar fuera de la pantalla; la gota no.
+    func dock(y: CGFloat? = nil) {
+        guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        let lowest = visible.minY - Self.shadowMargin
+        let highest = visible.maxY - panel.frame.height + Self.shadowMargin
+        let wanted = y ?? panel.frame.minY
+        panel.setFrameOrigin(NSPoint(x: visible.maxX - Self.pillWidth - Self.shadowMargin,
+                                     y: max(lowest, min(highest, wanted))))
     }
 }
 
@@ -502,26 +576,6 @@ private struct BatteryLine: View {
     }
 }
 
-private struct PebbleBatteryLine: View {
-    let battery: Battery
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text("Batería").font(.caption2.weight(.semibold))
-                .foregroundStyle(PebblePalette.label.color).frame(width: 52, alignment: .leading)
-            PebbleBar(fraction: Double(battery.percent) / 100, ink: PebblePalette.battery(battery))
-            Spacer(minLength: 0)
-            HStack(spacing: 2) {
-                if battery.isCharging { Image(systemName: "bolt.fill").font(.system(size: 8)) }
-                Text("\(battery.percent)%").font(.caption2.weight(.medium)).monospacedDigit()
-            }
-            .foregroundStyle(PebblePalette.battery(battery).color)
-            .frame(width: 46, alignment: .trailing)
-        }
-        .frame(height: PebbleController.rowHeight)
-    }
-}
-
 private struct SystemMemoryLine: View {
     let used: UInt64
     let total: UInt64
@@ -555,78 +609,5 @@ private struct UsageLine: View {
             .font(.caption).foregroundStyle(.secondary).monospacedDigit()
             ProgressView(value: Double(100 - window.usedPercent), total: 100).tint(window.usedPercent > 80 ? .orange : .accentColor)
         }
-    }
-}
-
-/// Muestra el % de la ventana de 5 h; si el proveedor no entrega cuota, cae a la RAM del proceso.
-private struct PebbleUsageLine: View {
-    let agent: Agent
-    let usage: UsageSnapshot?
-    let residentBytes: UInt64?
-
-    private var remaining: Int? { usage?.fiveHour.map { 100 - $0.usedPercent } }
-    private var severity: PebblePalette.Severity { .remaining(remaining ?? 100) }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(agent.shortTitle).font(.caption2.weight(.semibold))
-                .foregroundStyle(PebblePalette.label.color)
-                .frame(width: 52, alignment: .leading).lineLimit(1)
-            if let remaining {
-                PebbleBar(fraction: Double(remaining) / 100, ink: severity.ink)
-                Spacer(minLength: 0)
-                Text("\(remaining)%")
-                    .font(.caption2.weight(.medium)).monospacedDigit()
-                    .foregroundStyle(severity == .calm ? PebblePalette.label.color : severity.ink.color)
-                    .frame(width: 46, alignment: .trailing)
-            } else {
-                Text(residentBytes == nil ? "sin cuota" : "en RAM")
-                    .font(.caption2).foregroundStyle(PebblePalette.track.color)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                // Sin ancho fijo: "816,8 MB" no cabe en los 46 pt que le bastan a un "100%".
-                Text(residentBytes.map(MemoryReader.text) ?? "—")
-                    .font(.caption2.weight(.medium)).monospacedDigit().fixedSize()
-                    .foregroundStyle(PebblePalette.label.color)
-            }
-        }
-        .frame(height: PebbleController.rowHeight)
-    }
-}
-
-/// ProgressView pierde el color en un panel que nunca es key, así que la barra es propia.
-/// El canal va sólido y no `.quaternary`: sobre una píldora teñida, un gris translúcido
-/// desaparece y deja de verse dónde termina la barra.
-private struct PebbleBar: View {
-    let fraction: Double
-    let ink: PebblePalette.RGB
-
-    var body: some View {
-        Capsule().fill(PebblePalette.track.color)
-            .frame(width: PebbleController.barWidth, height: 5)
-            .overlay(alignment: .leading) {
-                Capsule().fill(ink.color)
-                    .frame(width: PebbleController.barWidth * max(0, min(1, fraction)), height: 5)
-            }
-    }
-}
-
-private struct PebbleMemoryLine: View {
-    let used: UInt64
-    let total: UInt64
-
-    private var fraction: Double { Double(used) / Double(total) }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text("RAM").font(.caption2.weight(.semibold))
-                .foregroundStyle(PebblePalette.label.color).frame(width: 52, alignment: .leading)
-            PebbleBar(fraction: fraction, ink: PebblePalette.memory(fraction))
-            Spacer(minLength: 0)
-            Text("\(Int((fraction * 100).rounded()))%")
-                .font(.caption2.weight(.medium)).monospacedDigit()
-                .foregroundStyle(PebblePalette.memory(fraction).color)
-                .frame(width: 46, alignment: .trailing)
-        }
-        .frame(height: PebbleController.rowHeight)
     }
 }

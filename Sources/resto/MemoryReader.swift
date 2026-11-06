@@ -30,7 +30,9 @@ enum MemoryReader {
         return totals
     }
 
-    /// Lo mismo que el Monitor de Actividad llama "memoria usada": activa + reservada + comprimida.
+    /// Lo mismo que el Monitor de Actividad llama "memoria usada": App Memory (anónimas menos
+    /// purgables) + reservada + comprimida. Ojo: NO es activa+wired+comprimida, que deja fuera las
+    /// páginas anónimas inactivas — siguen siendo de las apps y subreportan ~7 puntos.
     static func system() -> (used: UInt64, total: UInt64)? {
         var stats = vm_statistics64_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
@@ -43,7 +45,10 @@ enum MemoryReader {
         var page: vm_size_t = 0
         host_page_size(mach_host_self(), &page)
         let pageSize = UInt64(page)
-        let used = (UInt64(stats.active_count) + UInt64(stats.wire_count) + UInt64(stats.compressor_page_count)) * pageSize
+        let anon = UInt64(stats.internal_page_count)
+        let purgeable = UInt64(stats.purgeable_count)
+        let app = anon > purgeable ? anon - purgeable : 0   // restar a secas se desborda en UInt64
+        let used = (app + UInt64(stats.wire_count) + UInt64(stats.compressor_page_count)) * pageSize
         return (used, ProcessInfo.processInfo.physicalMemory)
     }
 

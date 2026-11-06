@@ -2,6 +2,10 @@ APP := resto.app
 
 DEST := /Applications/resto.app
 
+# En el SDK 27 `@State` es una macro cuyo plugin las Command Line Tools no traen: con Xcode
+# instalado esto sobra. ponytail: se cae cuando Apple borre el 26.5 de las CLT.
+export SDKROOT ?= /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+
 .PHONY: app install run clean test
 
 # macOS sólo trata la app como accesoria (sin Dock) si vive en un bundle con Info.plist.
