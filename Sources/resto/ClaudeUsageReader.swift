@@ -11,7 +11,7 @@ enum ClaudeUsageReader {
     }
 
     private static func liveUsage() async -> UsageSnapshot? {
-        guard let oauth = credentials(),
+        guard let oauth = await credentials(),
               let token = oauth["accessToken"] as? String,
               let requestURL = URL(string: "https://api.anthropic.com/api/oauth/usage") else { return nil }
         var request = URLRequest(url: requestURL)
@@ -30,8 +30,9 @@ enum ClaudeUsageReader {
     }
 
     /// El token vigente vive en el Llavero; `~/.claude/.credentials.json` suele quedar vencido.
-    private static func credentials() -> [String: Any]? {
-        let candidates = [keychainCredentials(), fileCredentials()].compactMap { $0 }
+    private static func credentials() async -> [String: Any]? {
+        let keychain = await blocking { keychainData() }.flatMap(oauth)
+        let candidates = [keychain, fileCredentials()].compactMap { $0 }
         return candidates.first(where: isUsable) ?? candidates.first
     }
 
@@ -42,18 +43,13 @@ enum ClaudeUsageReader {
 
     /// Vía `security` y no `SecItemCopyMatching`: la ACL del ítem ya autoriza a la shell, mientras
     /// que un binario firmado ad-hoc cambia de identidad en cada build y pediría permiso cada vez.
-    /// El token viaja por el pipe, nunca como argumento.
-    private static func keychainCredentials() -> [String: Any]? {
+    /// El token viaja por el pipe, nunca como argumento. Con tope: si `security` se queda en un
+    /// diálogo del Llavero, se corta en vez de dejar un hilo colgado por tick.
+    private static func keychainData() -> Data? {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/security")
         process.arguments = ["find-generic-password", "-w", "-s", "Claude Code-credentials", "-a", NSUserName()]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return oauth(in: data)
+        return capturedOutput(of: process, timeout: 15)
     }
 
     private static func fileCredentials() -> [String: Any]? {

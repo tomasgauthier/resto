@@ -19,6 +19,7 @@ struct RestoApp: App {
             precondition(CodexUsageReader.selfCheck())
             precondition(AgyUsageReader.selfCheck())
             precondition(blockingSelfCheck())
+            precondition(capturedOutputSelfCheck())
             exit(0)
         }
     }
@@ -37,7 +38,7 @@ struct RestoApp: App {
 /// El pool tiene un hilo por core: un `docker ps` colgado después de un sueño se los va comiendo
 /// tick a tick, y ahí la app se queda con los datos viejos sin volver nunca.
 /// ponytail: fuga a lo más un hilo de GCD por lector colgado; `readabilityHandler` si molesta.
-private func blocking<T: Sendable>(_ work: @Sendable @escaping () -> T) async -> T {
+func blocking<T: Sendable>(_ work: @Sendable @escaping () -> T) async -> T {
     await withCheckedContinuation { continuation in
         DispatchQueue.global().async { continuation.resume(returning: work()) }
     }
@@ -78,6 +79,7 @@ final class Monitor {
     /// Una lectura colgada no debe encolar la siguiente: el tick se salta y ya.
     private var scanning = false
     private var readingCodex = false
+    private var readingClaude = false
     private static let agentsKey = "pebbleAgents"
     private static let memoryKey = "pebbleShowsMemory"
     private static let batteryKey = "pebbleShowsBattery"
@@ -171,11 +173,17 @@ final class Monitor {
                 store(usage, for: .codex)
             }
         }
-        Task { [weak self] in
-            if let usage = await ClaudeUsageReader.read() {
-                self?.store(usage, for: .claude)
-            } else {
-                self?.fail("Abre Claude Code para actualizar la cuota", for: .claude)
+        if !readingClaude {
+            readingClaude = true
+            Task { [weak self] in
+                let usage = await ClaudeUsageReader.read()
+                guard let self else { return }
+                readingClaude = false
+                if let usage {
+                    store(usage, for: .claude)
+                } else {
+                    fail("Abre Claude Code para actualizar la cuota", for: .claude)
+                }
             }
         }
         Task { [weak self] in

@@ -77,15 +77,15 @@ struct AgentStatus: Identifiable {
 
     /// El PATH que hereda una app de GUI es mínimo, así que se pregunta al shell de login.
     /// ponytail: se resuelve una vez por lanzamiento (~40 ms); reinicia la app si instalas un CLI nuevo.
+    /// Con tope: un `.zprofile` que espera algo (`op`, `ssh-add`) colgaría el escaneo para siempre.
+    /// Lo que impriman los scripts de login queda antes del salto; el PATH es la última línea.
     static let loginPath: String = {
         let process = Process()
         process.executableURL = URL(filePath: "/bin/zsh")
-        process.arguments = ["-lc", "printf %s \"$PATH\""]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        let shellPath = (try? { try process.run(); return output.fileHandleForReading.readDataToEndOfFile() }())
-            .flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        process.arguments = ["-lc", "printf '\\n%s' \"$PATH\""]
+        let shellPath = capturedOutput(of: process, timeout: 3)
+            .flatMap { String(data: $0, encoding: .utf8) }?
+            .split(separator: "\n").last.map(String.init) ?? ""
         let fallbacks = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
                          FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/bin").path()]
         let env = ProcessInfo.processInfo.environment["PATH"] ?? ""
@@ -173,3 +173,33 @@ struct LocalSession {
 }
 
 private struct TimestampEvent: Decodable { let timestamp: Date? }
+
+/// Corre `process` y devuelve su stdout, o nil si no partió, falló o pasó el tope (se mata).
+/// ponytail: si un nieto hereda el pipe y sigue vivo, la lectura espera a que lo suelte.
+func capturedOutput(of process: Process, timeout: TimeInterval) -> Data? {
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return nil }
+    DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+        if process.isRunning { process.terminate() }
+    }
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return process.terminationReason == .exit && process.terminationStatus == 0 ? data : nil
+}
+
+/// Un proceso colgado se corta en el tope, y un porcentaje fuera de rango llega acotado.
+func capturedOutputSelfCheck() -> Bool {
+    let hung = Process()
+    hung.executableURL = URL(filePath: "/bin/sleep")
+    hung.arguments = ["30"]
+    let start = Date.now
+    guard capturedOutput(of: hung, timeout: 0.5) == nil, Date.now.timeIntervalSince(start) < 5 else { return false }
+    let echo = Process()
+    echo.executableURL = URL(filePath: "/bin/echo")
+    echo.arguments = ["hola"]
+    guard capturedOutput(of: echo, timeout: 5) == Data("hola\n".utf8) else { return false }
+    return UsageWindow(usedPercent: 120, resetsAt: .now).usedPercent == 100
+        && UsageWindow(usedPercent: -3, resetsAt: .now).usedPercent == 0
+}

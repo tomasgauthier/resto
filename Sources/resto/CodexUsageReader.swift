@@ -3,6 +3,13 @@ import Foundation
 struct UsageWindow {
     let usedPercent: Int
     let resetsAt: Date
+
+    /// Un proveedor puede reportar más de 100 (Kimi calcula `used/limit` sin tope): acotado
+    /// acá, ninguna vista muestra un "queda -5 %".
+    init(usedPercent: Int, resetsAt: Date) {
+        self.usedPercent = min(100, max(0, usedPercent))
+        self.resetsAt = resetsAt
+    }
 }
 
 struct UsageSnapshot {
