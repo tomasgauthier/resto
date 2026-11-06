@@ -49,7 +49,7 @@ enum ClaudeUsageReader {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/security")
         process.arguments = ["find-generic-password", "-w", "-s", "Claude Code-credentials", "-a", NSUserName()]
-        return capturedOutput(of: process, timeout: 15)
+        return capturedOutput(of: process, timeout: 60)
     }
 
     private static func fileCredentials() -> [String: Any]? {
