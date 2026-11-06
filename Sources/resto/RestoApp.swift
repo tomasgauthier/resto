@@ -17,6 +17,7 @@ struct RestoApp: App {
             precondition(PebblePalette.selfCheck())
             precondition(UsageSnapshot.selfCheck())
             precondition(CodexUsageReader.selfCheck())
+            precondition(AgyUsageReader.selfCheck())
             precondition(blockingSelfCheck())
             exit(0)
         }
@@ -175,7 +176,11 @@ final class Monitor {
             case .failure(let error): self?.usageErrors[.kimi] = error.message
             }
         }
-        usageErrors[.agy] = "Cuota no expuesta por `agy`"
+        switch AgyUsageReader.read() {
+        // Sin `merging`: el archivo ya trae todo lo conocido, y fusionar dejaría pegada una ventana vencida.
+        case .success(let usage): usages[.agy] = usage; usageErrors[.agy] = nil
+        case .failure(let error): usageErrors[.agy] = error.message
+        }
         for agent in [Agent.gemini, .opencode, .copilot] {
             usageErrors[agent] = "Sin cuota real: sólo historial local"
         }
