@@ -99,7 +99,8 @@ enum CodexUsageReader {
             process.waitUntilExit()
             return decode(buffer)
         } catch {
-            process.terminate()
+            // `run()` falló: el proceso nunca partió, y `terminate()` sobre uno así lanza una
+            // excepción de Objective-C que Swift no atrapa.
             return nil
         }
     }

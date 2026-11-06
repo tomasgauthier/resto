@@ -128,6 +128,15 @@ final class Monitor {
         usageErrors[agent] = nil
     }
 
+    /// Una lectura fallida no trae ventanas nuevas, pero las viejas igual vencen: sin podarlas,
+    /// una cuota ya reiniciada seguiría en pantalla y taparía el error.
+    private func fail(_ message: String, for agent: Agent) {
+        usageErrors[agent] = message
+        guard let previous = usages[agent] else { return }
+        let open = UsageSnapshot(provider: previous.provider, fiveHour: nil, weekly: nil).merging(over: previous)
+        usages[agent] = open.fiveHour == nil && open.weekly == nil ? nil : open
+    }
+
     func refresh(force: Bool = false) {
         // Escanear los historiales recorre miles de archivos y `ps` bloquea el hilo: ni el
         // principal ni el pool cooperativo (ver `blocking`).
@@ -156,7 +165,7 @@ final class Monitor {
                 guard let self else { return }
                 readingCodex = false
                 guard let usage else {
-                    usageErrors[.codex] = "No respondió `codex app-server`"
+                    fail("No respondió `codex app-server`", for: .codex)
                     return
                 }
                 store(usage, for: .codex)
@@ -166,19 +175,19 @@ final class Monitor {
             if let usage = await ClaudeUsageReader.read() {
                 self?.store(usage, for: .claude)
             } else {
-                self?.usageErrors[.claude] = "Abre Claude Code para actualizar la cuota"
+                self?.fail("Abre Claude Code para actualizar la cuota", for: .claude)
             }
         }
         Task { [weak self] in
             switch await KimiUsageReader.read() {
             case .success(let usage):
                 self?.store(usage, for: .kimi)
-            case .failure(let error): self?.usageErrors[.kimi] = error.message
+            case .failure(let error): self?.fail(error.message, for: .kimi)
             }
         }
         switch AgyUsageReader.read() {
         case .success(let usage): store(usage, for: .agy)
-        case .failure(let error): usageErrors[.agy] = error.message
+        case .failure(let error): fail(error.message, for: .agy)
         }
         for agent in [Agent.gemini, .opencode, .copilot] {
             usageErrors[agent] = "Sin cuota real: sólo historial local"
